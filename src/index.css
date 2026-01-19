@@ -7,6 +7,10 @@
 
 /* Aplicando a fonte e melhorando a renderização do texto */
 body {
+  margin: 0; /* GARANTE QUE NÃO HÁ BORDAS BRANCAS */
+  padding: 0;
+  width: 100vw; /* Garante largura total */
+  overflow-x: hidden;
   font-family: 'Inter', sans-serif;
   background-color: #f8fafc; /* Um cinza muito suave, mais moderno que o branco */
   -webkit-font-smoothing: antialiased; /* Deixa a fonte mais nítida */
