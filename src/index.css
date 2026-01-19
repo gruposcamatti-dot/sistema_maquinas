@@ -1,3 +1,30 @@
+/* Importando a fonte INTER do Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Aplicando a fonte e melhorando a renderização do texto */
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #f8fafc; /* Um cinza muito suave, mais moderno que o branco */
+  -webkit-font-smoothing: antialiased; /* Deixa a fonte mais nítida */
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar moderna e fina */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
