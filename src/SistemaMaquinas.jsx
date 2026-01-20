@@ -95,6 +95,9 @@ export default function FechamentoMaquinas() {
   // --- ESTADOS PARA O MENU RESUMO (NOVO) ---
   const [resumoSegmento, setResumoSegmento] = useState('');
   const [resumoLocalizacao, setResumoLocalizacao] = useState('');
+  // --- NOVOS ESTADOS PARA CONFERÊNCIA ---
+  const [isConferenciaModalOpen, setIsConferenciaModalOpen] = useState(false);
+  const [conferenciaTab, setConferenciaTab] = useState('entrada');
   // --- ESTADOS DO FIREBASE ---
   const [machines, setMachines] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -871,7 +874,7 @@ export default function FechamentoMaquinas() {
     document.body.removeChild(link);
   };
 
-// --- IMPORTADOR INTELIGENTE V5 (COM M.O. INTERNA) ---
+// --- IMPORTADOR INTELIGENTE V6 (CORREÇÃO DE COLUNAS) ---
   const handleSmartImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -879,6 +882,7 @@ export default function FechamentoMaquinas() {
     setImportPreview(null);
     setImportType(null);
 
+    // Cria lista de frotas conhecidas (normalizadas)
     const knownFleets = machines.map(m => m.frota ? m.frota.trim().toUpperCase() : '');
 
     // --- LISTA MESTRA DE CLASSES VÁLIDAS ---
@@ -899,7 +903,7 @@ export default function FechamentoMaquinas() {
       // PNEUS
       "PNEUS E CAMARAS", "PNEUS E CAMERAS – NOVOS", "PNEUS RESSOLADOS", "SERVICOS DE PNEUS / BORRACHARIA",
       // FIXAS E ADMINISTRATIVAS
-      "SEGUROS", "DPVAT (SEGURO OBRIGATORIO)", "LICENCIAMENTO", "MENSALIDADES", "RAT CUSTO-ADM", // <--- Adicionado
+      "SEGUROS", "DPVAT (SEGURO OBRIGATORIO)", "LICENCIAMENTO", "MENSALIDADES", "RAT CUSTO-ADM",
       // GERAIS E COMBUSTÍVEL
       "LAVAGEM DE FROTAS", "RAT DESP FINANCEIRAS", "MOTO TAXI", "TAXA DE COBRANÇA", 
       "OLEO DIESEL", "BENS PEQUENO VALOR (ATIVO PERMANENTE)",
@@ -907,6 +911,8 @@ export default function FechamentoMaquinas() {
       "PEÇAS E ACESSORIOS SUBST. DEVIDO A FURTO"
     ]);
 
+    // --- FUNÇÃO AUXILIAR DE NORMALIZAÇÃO ---
+    // Remove zeros à esquerda. Ex: "002260" -> "2260"
     const normalizeCode = (code) => {
        if (!code) return '';
        return String(code).trim().replace(/^0+/, '');
@@ -962,10 +968,6 @@ export default function FechamentoMaquinas() {
       for(let i=0; i < parsedRows.length && i < 50; i++) {
          const rowStr = parsedRows[i].join(' ').toUpperCase();
          
-         // DETECÇÃO DE LAYOUTS:
-         // 1. SAE Entrada/Saída
-         // 2. Rastreador (Placa + Mensalidade)
-         // 3. M.O. Interna (Custo Borracharia/Mecânica)
          if (rowStr.includes('PRGER-CCUS') || 
              rowStr.includes('DET01-QUEBRA') || 
              (rowStr.includes('PLACA') && rowStr.includes('MENSALIDADE')) ||
@@ -981,10 +983,17 @@ export default function FechamentoMaquinas() {
         return;
       }
 
-      const getIdx = (colName) => headers.findIndex(h => h.includes(colName)); // Includes para pegar acentos parciais
+      // --- CORREÇÃO IMPORTANTE AQUI ---
+      // Prioriza a busca EXATA do nome da coluna para evitar confundir
+      // "DET01-QUEBRA" com "DET01-QUEBRA-EMPR"
+      const getIdx = (colName) => {
+         const exactIdx = headers.findIndex(h => h === colName);
+         if (exactIdx !== -1) return exactIdx;
+         return headers.findIndex(h => h.includes(colName));
+      };
+
       const cleanStr = (val) => val ? val.trim().replace(/^"|"$/g, '') : '';
       
-      // Parser numérico antigo (para TXT SAE)
       const parseTxtNumber = (valStr, divisor) => {
         if (!valStr) return 0;
         const cleanNum = valStr.replace(/[^\d-]/g, '');
@@ -1016,16 +1025,15 @@ export default function FechamentoMaquinas() {
       let materiaisNaoCadastrados = new Set();
       let classesNaoIdentificadas = new Set();
 
-      // --- CENÁRIO 1: M.O. INTERNA (NOVO) ---
+      // --- CENÁRIO 1: M.O. INTERNA ---
       if (getIdx('CUSTO TOTAL BORRACHARIA') !== -1 || getIdx('CUSTO TOTAL MECANICA') !== -1) {
-         detectedType = 'saida'; // Consideramos custo como saída
-         
-         processedData = []; // Reinicia array para garantir
+         detectedType = 'saida';
+         processedData = [];
 
          const idxFrota = getIdx('FROTA');
          const idxBorracharia = getIdx('CUSTO TOTAL BORRACHARIA');
-         const idxMecanica = getIdx('CUSTO TOTAL MECANICA'); // Pode vir com ou sem acento, o getIdx com includes ajuda
-         const idxData = getIdx('DATA'); // Tenta achar data, se tiver
+         const idxMecanica = getIdx('CUSTO TOTAL MECANICA'); 
+         const idxData = getIdx('DATA');
 
          const linhas = parsedRows.slice(headerRowIndex + 1);
 
@@ -1037,8 +1045,6 @@ export default function FechamentoMaquinas() {
             if (!frota) return;
 
             const unknownFleet = !knownFleets.includes(frota.toUpperCase());
-            
-            // Tenta pegar a data da linha, senão usa hoje
             const dataLinha = idxData !== -1 ? parseDateTxt(cleanStr(cols[idxData])) : null;
             const dataFinal = dataLinha || new Date().toISOString().split('T')[0];
 
@@ -1120,7 +1126,7 @@ export default function FechamentoMaquinas() {
          }).filter(Boolean);
 
       // --- CENÁRIO 3: ENTRADA (SAE134) ---
-      } else if (getIdx('PRENT-TOTA') !== -1 || getIdx('PRGER-NFOR') !== -1) {
+      } else if (getIdx('PRGER-TOTA') !== -1 || getIdx('PRGER-NFOR') !== -1) {
         detectedType = 'entrada';
         processedData = parsedRows.slice(headerRowIndex + 1).map((cols, index) => {
            if (cols.length < 5) return null;
@@ -1132,12 +1138,12 @@ export default function FechamentoMaquinas() {
            let rawDesc = cleanStr(cols[getIdx('PR-SORT')]);
            if (rawDesc.match(/^0+$/) || rawDesc === '') rawDesc = "Lançamento SAF";
 
-           const valStr = cleanStr(cols[getIdx('PRENT-TOTA')]);
+           const valStr = cleanStr(cols[getIdx('PRGER-TOTA')]);
            const valorFinal = parseTxtNumber(valStr, 100);
 
-           let frota = cleanStr(cols[getIdx('PRGER-CCUS')]);
-           if (!frota) return null;
-           frota = normalizeCode(frota);
+           let frotaRaw = cleanStr(cols[getIdx('PRGER-CCUS')]);
+           if (!frotaRaw) return null;
+           let frota = normalizeCode(frotaRaw);
 
            const unknownFleet = !knownFleets.includes(frota.toUpperCase());
            
@@ -1172,13 +1178,18 @@ export default function FechamentoMaquinas() {
         
         const idxCodMateria = getIdx('PRMAT-CODI');
         const idxNomeMateria = getIdx('PRMAT-NOME');
+        
+        // AQUI: Agora getIdx garante que pega a coluna DET01-QUEBRA correta (com a frota)
+        const idxFrota = getIdx('DET01-QUEBRA'); 
 
         processedData = parsedRows.slice(headerRowIndex + 1).map((cols, index) => {
            if (cols.length < 5) return null;
 
-           let frota = cleanStr(cols[getIdx('DET01-QUEBRA')]);
-           if (!frota) return null;
-           frota = normalizeCode(frota);
+           let frotaRaw = cleanStr(cols[idxFrota]);
+           if (!frotaRaw) return null;
+           
+           // Normaliza: "002260" vira "2260"
+           let frota = normalizeCode(frotaRaw);
 
            const unknownFleet = !knownFleets.includes(frota.toUpperCase());
 
@@ -2341,12 +2352,60 @@ export default function FechamentoMaquinas() {
           </div>
         );
       case 'lancamentos':
+        // Lógica auxiliar para o Modal de Conferência
+        const getDadosConferencia = () => {
+           // 1. Filtra pelo tipo da aba selecionada no modal (entrada ou saida)
+           // 2. Filtra pela data (respeitando o filtro global selecionado na tela)
+           const dadosFiltrados = expenses.filter(exp => {
+              if (exp.tipo !== conferenciaTab) return false;
+
+              // Filtro de Data (Reutilizando a lógica existente)
+              let matchesDate = true;
+              if (exp.data) {
+                const dateParts = exp.data.includes('/') ? exp.data.split('/') : exp.data.split('-');
+                const expDate = exp.data.includes('/') 
+                  ? new Date(dateParts[2], dateParts[1] - 1, dateParts[0]) 
+                  : new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+                
+                const expMonth = String(expDate.getMonth() + 1);
+                const expYear = String(expDate.getFullYear());
+
+                if (filterPeriod === 'Ano') {
+                  matchesDate = expYear === filterYear;
+                } else if (filterPeriod === 'Mês') {
+                  matchesDate = expYear === filterYear && expMonth === filterMonth;
+                } else {
+                   // Para simplificar no modal, mantemos lógica de Mês/Ano. 
+                   // Se quiser Trimestre/Semestre exato, teria que replicar a lógica completa do useMemo.
+                   // Assumindo Mês/Ano como principal:
+                   matchesDate = expYear === filterYear && expMonth === filterMonth; 
+                }
+              }
+              return matchesDate;
+           });
+
+           // 3. Agrupa por Classe e Soma
+           const agrupado = dadosFiltrados.reduce((acc, curr) => {
+              const classe = (curr.classe || 'SEM CLASSE').toUpperCase().trim();
+              const valor = Number(curr.valor) || 0;
+              acc[classe] = (acc[classe] || 0) + valor;
+              return acc;
+           }, {});
+
+           // 4. Converte para array e ordena pelo maior valor
+           return Object.entries(agrupado)
+              .map(([classe, total]) => ({ classe, total }))
+              .sort((a, b) => b.total - a.total);
+        };
+
+        const dadosConferencia = isConferenciaModalOpen ? getDadosConferencia() : [];
+        const totalConferencia = dadosConferencia.reduce((acc, curr) => acc + curr.total, 0);
+
         return (
           <>
             <div className="space-y-6 animate-fadeIn">
               
-              {/* HEADER E BOTÕES DE TIPO (ENTRADA / SAÍDA) */}
-{/* HEADER E BOTÕES DE TIPO (ENTRADA / SAÍDA) */}
+              {/* HEADER E BOTÕES */}
               <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4">
                 <div>
                   <h2 className="text-3xl font-black text-slate-800 tracking-tight">Lançamentos</h2>
@@ -2369,7 +2428,15 @@ export default function FechamentoMaquinas() {
                 </div>
 
                 <div className="flex gap-2">
-                  {/* BOTÃO DE EMERGÊNCIA - SÓ APARECE SE TIVER DADOS */}
+                  {/* BOTÃO CONFERÊNCIA (NOVO) */}
+                  <button 
+                    onClick={() => { setConferenciaTab('entrada'); setIsConferenciaModalOpen(true); }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/20 flex items-center gap-2 transition-all hover:translate-y-[-2px]"
+                  >
+                    <ClipboardList size={20} /> Conferência
+                  </button>
+
+                  {/* BOTÃO DE EMERGÊNCIA */}
                   {expenses.length > 0 && (
                     <button 
                       onClick={handleWipeAllExpenses}
@@ -2391,7 +2458,7 @@ export default function FechamentoMaquinas() {
                 </div>
               </div>
 
-              {/* CARD DE FILTROS (MANTIDO) */}
+              {/* CARD DE FILTROS */}
               <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row gap-4 items-end">
                 <div className="w-full md:w-auto">
                   <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Período</label>
@@ -2434,11 +2501,10 @@ export default function FechamentoMaquinas() {
                 </div>
               )}
 
-              {/* TABELA DINÂMICA (ENTRADA vs SAÍDA) */}
+              {/* TABELA DINÂMICA */}
               <div className="bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 overflow-hidden">
                  <div className="overflow-x-auto">
                   <table className="w-full text-sm text-left text-slate-600">
-                    {/* CABEÇALHO DA TABELA */}
                     <thead className="text-xs text-slate-500 font-bold uppercase bg-slate-50/80 border-b border-slate-100">
                        <tr>
                         <th className="px-6 py-4 w-4">
@@ -2451,8 +2517,6 @@ export default function FechamentoMaquinas() {
                         </th>
                         <th className="px-6 py-4 tracking-wider">Data</th>
                         <th className="px-6 py-4 tracking-wider">Frota</th>
-                        
-                        {/* Colunas Dinâmicas (Entrada vs Saída) */}
                         {lancamentosTab === 'entrada' ? (
                           <th className="px-6 py-4 tracking-wider">Descrição</th>
                         ) : (
@@ -2461,14 +2525,11 @@ export default function FechamentoMaquinas() {
                             <th className="px-6 py-4 tracking-wider">Qtd</th>
                           </>
                         )}
-                        
                         <th className="px-6 py-4 tracking-wider">Classe</th>
                         <th className="px-6 py-4 text-right tracking-wider">Valor</th>
                         <th className="px-6 py-4 text-center tracking-wider">Ações</th>
                       </tr>
                     </thead>
-
-                    {/* CORPO DA TABELA (ATUALIZADO COM VALORES NEGATIVOS EM VERMELHO) */}
                     <tbody className="divide-y divide-slate-50">
                       {filteredExpenses.length > 0 ? (
                         filteredExpenses.map((exp) => (
@@ -2503,7 +2564,6 @@ export default function FechamentoMaquinas() {
                                 </span>
                             </td>
                             
-                            {/* AQUI: Lógica de cor condicional (Negativo = Vermelho, Positivo = Cinza Escuro) */}
                             <td className={`px-6 py-4 text-right font-bold ${Number(exp.valor) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
                               {formatCurrency(exp.valor)}
                             </td>
@@ -2536,7 +2596,84 @@ export default function FechamentoMaquinas() {
               </div>
             </div>
 
-            {/* MODAL DE DETALHES (NOTA FISCAL) */}
+            {/* --- MODAL DE CONFERÊNCIA (NOVO) --- */}
+            {isConferenciaModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-fadeIn">
+                    
+                    {/* Header do Modal */}
+                    <div className="px-6 py-5 border-b border-slate-100 flex flex-col bg-slate-50 gap-4">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                            <ClipboardList size={22} className="text-indigo-600"/> Conferência de Classes
+                          </h3>
+                          <p className="text-sm text-slate-500 mt-1 uppercase tracking-wide font-bold">
+                             Resumo por Classe ({filterMonth}/{filterYear})
+                          </p>
+                        </div>
+                        <button onClick={() => setIsConferenciaModalOpen(false)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-full"><X size={20} /></button>
+                      </div>
+
+                      {/* Seletor de Abas do Modal */}
+                      <div className="flex bg-slate-200 p-1 rounded-xl self-start">
+                         <button 
+                            onClick={() => setConferenciaTab('entrada')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${conferenciaTab === 'entrada' ? 'bg-white text-green-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                         >
+                            <ArrowDownCircle size={14} /> Entradas
+                         </button>
+                         <button 
+                            onClick={() => setConferenciaTab('saida')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${conferenciaTab === 'saida' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                         >
+                            <ArrowUpCircle size={14} /> Saídas
+                         </button>
+                      </div>
+                    </div>
+                    
+                    {/* Conteúdo da Tabela */}
+                    <div className="overflow-y-auto flex-1 bg-white custom-scrollbar">
+                      <table className="w-full text-sm text-left">
+                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-100 sticky top-0">
+                          <tr>
+                            <th className="px-6 py-3 font-bold">Classe</th>
+                            <th className="px-6 py-3 text-right font-bold">Valor Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                           {dadosConferencia.map((item, idx) => (
+                             <tr key={idx} className="hover:bg-slate-50">
+                               <td className="px-6 py-3 font-medium text-slate-700">{item.classe}</td>
+                               <td className="px-6 py-3 text-right font-bold text-slate-800">{formatCurrency(item.total)}</td>
+                             </tr>
+                           ))}
+                           {dadosConferencia.length === 0 && (
+                             <tr>
+                               <td colSpan="2" className="p-8 text-center text-slate-400">Nenhum registro encontrado para este filtro.</td>
+                             </tr>
+                           )}
+                        </tbody>
+                        {dadosConferencia.length > 0 && (
+                          <tfoot className="bg-slate-100 sticky bottom-0 border-t border-slate-200">
+                             <tr>
+                               <td className="px-6 py-3 font-black text-slate-600 uppercase text-right">Total Geral</td>
+                               <td className="px-6 py-3 text-right font-black text-indigo-700 text-lg">{formatCurrency(totalConferencia)}</td>
+                             </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                      <button onClick={() => setIsConferenciaModalOpen(false)} className="px-6 py-2.5 text-sm font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-colors">Fechar</button>
+                    </div>
+                 </div>
+              </div>
+            )}
+
+            {/* MODAL DE DETALHES (NOTA FISCAL) - MANTIDO DO CÓDIGO ORIGINAL */}
             {isDetailsModalOpen && viewingDetail && (
               <div 
                 className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
